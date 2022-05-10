@@ -36,12 +36,12 @@ o	The database call is relatively slow and we elect to mock the database with Mo
 	Successful persistence of the appointment
 	Failed persistence of the appointment due to illegal argument exception
 5.	Finally, we send an email invitation to the event to our distribution list - we do not want to actually send emails and this is our only email process so we use Mockito to create a Test Double  
-o	We set expectations that test:
-•	Email address list is not valid,
-•	Sender is not valid
-•	Subject is missing
-•	Subject is too long
-
+<ul>	We set expectations that test:
+<li>	Email address list is not valid,
+<li>	Sender is not valid
+<li>	Subject is missing
+<li>	Subject is too long
+</ul>
 Thin Slices Tests to implement:
 1.	SOAP WS with Spring MockWebServiceServer
 2.	Shared collaborator as a custom stub
