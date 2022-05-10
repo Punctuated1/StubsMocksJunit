@@ -37,7 +37,7 @@ o	The database call is relatively slow and we elect to mock the database with Mo
 	Failed persistence of the appointment due to illegal argument exception
 5.	Finally, we send an email invitation to the event to our distribution list - we do not want to actually send emails and this is our only email process so we use Mockito to create a Test Double  
 <ul>	We set expectations that test:
-<li>	Email address list is not valid,
+&nbsp;<li>	Email address list is not valid,
 <li>	Sender is not valid
 <li>	Subject is missing
 <li>	Subject is too long
