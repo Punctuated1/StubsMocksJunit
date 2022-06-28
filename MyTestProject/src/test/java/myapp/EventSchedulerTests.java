@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.util.concurrent.Future;
 
 import javax.xml.bind.JAXBElement;
 import javax.xml.namespace.QName;
@@ -27,6 +28,12 @@ import javax.xml.transform.TransformerConfigurationException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.URIResolver;
 
+import org.apache.avro.specific.SpecificRecord;
+import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.errors.SerializationException;
 import org.custommonkey.xmlunit.XMLUnit;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,6 +75,9 @@ import com.example.consumingwebservice.wsdl.CheckVenueMeetsRequirmentsResponse;
 import com.example.consumingwebservice.wsdl.VenueRequirementsResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import myapp.generated.avro.TweetDto;
+
+
 @ExtendWith(SpringExtension.class)
 @SpringBootTest(classes=SpringTestConfig.class)
 //@ExtendWith(SpringExtension.class)
@@ -87,10 +97,15 @@ public class EventSchedulerTests {
     private MockRestServiceServer mockRestServer;
     
     private ObjectMapper mapper = new ObjectMapper();
+    
+    @Autowired
+    private KafkaProducerConfigHelper kafkaProducerConfigHelper;
+    
+    private MockProducer<String, SpecificRecord> myMockProducer;
 
     @Value("${venue.reservation.url}")
 	private String venueReservationUrlString;
-
+    
  	@Autowired
 	private MyEventScheduler myEventScheduler;
 
@@ -98,10 +113,12 @@ public class EventSchedulerTests {
 	private HttpHeaders headers = new HttpHeaders();
 	private URI venueReservationUrl = null;
 	private String expectedEventDate = "2028-11-03";
+	
+    @Value("${kafka.topic.tweet}")
+    private String kafkaTopicTweet;
     
 	@BeforeAll
 	public void setUp() {
-		
 		MockitoAnnotations.openMocks(this);
 		headers.setContentType(MediaType.APPLICATION_JSON);
 		try {
@@ -117,174 +134,899 @@ public class EventSchedulerTests {
 		RestGatewaySupport gatewaySupport = new RestGatewaySupport();
 		gatewaySupport.setRestTemplate(restTemplate);
 		mockRestServer = MockRestServiceServer.createServer(gatewaySupport);
+		try {
+			myMockProducer = (MockProducer<String, SpecificRecord>) kafkaProducerConfigHelper.getMyKafkaProducerInit();
+		} catch(Exception ex) {
+			ex.printStackTrace();
+		}
+
     }
 
-	public EventSchedulerTests() {
-		// TODO Auto-generated constructor stub
-	}
+//	public EventSchedulerTests() {
+//		// TODO Auto-generated constructor stub
+//	}
+//
+//	@Test
+//	void negativeVenueRequirementsCheckerCapacity() {
+//		//arrange 
+//
+//		populateEventInformation(10);
+//		XMLUnit.setIgnoreComments(true);
+//		XMLUnit.setIgnoreWhitespace(true);
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerCapacityRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerCapacityResponseString());
+//		eventInformation.setExpectedNumberAttendees(1000);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer
+//			.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_REQ_CAPACITY_INSUFFICIENT,eventConfirmation.getConfirmationStatus()); 
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeVenueRequirementsBigScreen() {
+//		//arrange 
+//		
+//		populateEventInformation(10);
+//		XMLUnit.setIgnoreComments(true);
+//		XMLUnit.setIgnoreWhitespace(true);
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerBigScreenRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerBigScreenResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(true);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_REQ_NO_BIG_SCREEN,eventConfirmation.getConfirmationStatus()); 
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeVenueRequirementsException() {
+//		//arrange 
+//		
+//		populateEventInformation(10);
+//		XMLUnit.setIgnoreComments(true);
+//		XMLUnit.setIgnoreWhitespace(true);
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerExceptionPayloadString());
+//		eventInformation.setExpectedNumberAttendees(101);
+//		eventInformation.setLargeScreenNeeded(false);
+//		RuntimeException runtimeException = new RuntimeException("An exception occured.");
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withException(runtimeException));
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_REQ_EXCEPTION_OCCURED,eventConfirmation.getConfirmationStatus()); 
+//		mockWebServiceServer.verify();
+//	}
+//
+//	private String buildVenueRequirementsCheckerExceptionPayloadString() {
+//		String requestCapacityTooGreat = 
+//				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
+//					"<venueRequirements>"+
+//						"<nameOfVenue>Junit test hall</nameOfVenue>"+
+//						"<expectedNumberAttendees>101</expectedNumberAttendees>"+
+//						"<largeScreenNeeded>false</largeScreenNeeded>"+
+//					"</venueRequirements>"+
+//				"</checkVenueMeetsRequirments>";
+//		return requestCapacityTooGreat;
+//	}
+//	
+//	private String buildVenueRequirementsCheckerCapacityRequestString() {
+//		String requestCapacityTooGreat = 
+//				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
+//					"<venueRequirements>"+
+//						"<nameOfVenue>Junit test hall</nameOfVenue>"+
+//						"<expectedNumberAttendees>1000</expectedNumberAttendees>"+
+//						"<largeScreenNeeded>false</largeScreenNeeded>"+
+//					"</venueRequirements>"+
+//				"</checkVenueMeetsRequirments>";
+//		return requestCapacityTooGreat;
+//	}
+//	
+//	private String buildVenueRequirementsCheckerCapacityResponseString() {
+//		String responseCapacityTooGreat = 
+//				"<checkVenueMeetsRequirmentsResponse xmlns=\"http://soapy1\">"+
+//					"<checkVenueMeetsRequirmentsReturn>"+
+//						"<responseCode>"+AppConstants.VENUE_REQ_CAPACITY_INSUFFICIENT+"</responseCode> " +
+//						"<responseCodeExplanation>Because it is too small for the crowd</responseCodeExplanation>"+
+//					"</checkVenueMeetsRequirmentsReturn>"+
+//				"</checkVenueMeetsRequirmentsResponse>" ;
+//		return responseCapacityTooGreat;
+//	}
+//	
+//	private String buildVenueRequirementsCheckerBigScreenRequestString() {
+//		String requestCapacityTooGreat = 
+//				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
+//					"<venueRequirements>"+
+//						"<nameOfVenue>Junit test hall</nameOfVenue>"+
+//						"<expectedNumberAttendees>100</expectedNumberAttendees>"+
+//						"<largeScreenNeeded>true</largeScreenNeeded>"+
+//					"</venueRequirements>"+
+//				"</checkVenueMeetsRequirments>";
+//		return requestCapacityTooGreat;
+//	}
+//	
+//	private String buildVenueRequirementsCheckerBigScreenResponseString() {
+//		String responseCapacityTooGreat = 
+//				"<checkVenueMeetsRequirmentsResponse xmlns=\"http://soapy1\">"+
+//					"<checkVenueMeetsRequirmentsReturn>"+
+//						"<responseCode>"+AppConstants.VENUE_REQ_NO_BIG_SCREEN+"</responseCode> " +
+//						"<responseCodeExplanation>No big screen on stage.</responseCodeExplanation>"+
+//					"</checkVenueMeetsRequirmentsReturn>"+
+//				"</checkVenueMeetsRequirmentsResponse>" ;
+//		return responseCapacityTooGreat;
+//	}
+//
+//	@Test
+//	void negativeDateInputLowerBound() {
+//		//arrange 
+//		populateEventInformation(0);
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertTrue(eventConfirmation.getConfirmationStatus().contains("InputError") 
+//				&& eventConfirmation.getConfirmationStatusExplanation().contains("must be greater than zero and less than"));
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeDateInputUpperBound() {
+//		//arrange 
+//		populateEventInformation(31);
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertTrue(eventConfirmation.getConfirmationStatus().contains("InputError") 
+//				&& eventConfirmation.getConfirmationStatusExplanation().contains("must be greater than zero and less than"));
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	public void positiveDatePlus3() {
+//		//arrange 
+//		populateEventInformation(3);
+//		expectedEventDate = "2028-11-03";
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		mockRestServer.verify();
+//
+//		//Assert
+//		assertEquals(expectedEventDate,eventConfirmation.getEventDate()); 
+//		
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void positiveDatePlus10() {
+//		//arrange 
+//		populateEventInformation(10);
+//		expectedEventDate = "2028-11-14";
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(expectedEventDate,eventConfirmation.getEventDate()); 
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void positiveDatePlus30() {
+//		//arrange 
+//		populateEventInformation(30);
+//		expectedEventDate = "2028-12-14";
+//
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(expectedEventDate,eventConfirmation.getEventDate()); 
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeReserveVenueConnectNotSuccessful() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformationDuplicate(10); 
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.REQUEST_TIMEOUT)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.VENUE_CONNECT_FAILED);
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeReserveVenueDateBookedAlready() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformationDuplicate(10); 
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseDup();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_ALREADY_BOOKED_FOR_DATE, eventConfirmation.getVenueReservationStatus());
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeReserveVenueInvalidCreditCard() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformation(10); 
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseInvalidPaymentCard();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_PAYMENT_CARD_INVALID, eventConfirmation.getVenueReservationStatus());
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeReserveVenueInvalidCreditCardCvc() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformation(10); 
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseInvalidPaymentCardCvc();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_PAYMENT_CARD_CVC_INVALID, eventConfirmation.getVenueReservationStatus());
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeReserveVenuePaymentCardExpired() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformation(10); 
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponsePaymentCardExpired();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_PAYMENT_CARD_EXPIRED, eventConfirmation.getVenueReservationStatus());
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeReserveVenueDepositAmtExceedsAvailableCredit() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformation(10); 
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseVenueDepositAmtExceedsAvailableCredit();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(AppConstants.VENUE_DEPOSIT_AMT_EXCEEDS_AVAILABLE_CREDIT, eventConfirmation.getVenueReservationStatus());
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void positiveReserveVenue() {
+//		//arrange 
+//
+//		// create request entity
+//		expectedEventDate = "2028-11-14";
+//		populateEventInformationDuplicate(10); 
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		String emailResult=AppConstants.SUCCESS;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.SUCCESS);
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeSaveEventRepository() {
+//		//arrange 
+//		// Create Response object
+//		populateEventInformation(30);
+//		expectedEventDate = "2028-12-14";
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		// setup repository expectations
+//		when(eventRepository.save(any(EventDetail.class))) 
+//				.thenThrow(IllegalArgumentException.class);
+//		
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertTrue(eventConfirmation.getConfirmationStatus().contains(AppConstants.SAVE_ERROR) 
+//				&& eventConfirmation.getConfirmationStatusExplanation().contains("IllegalArgumentException"));
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void positiveSaveEventRepository() {
+//		//arrange 
+//
+//		populateEventInformation(30);
+//		expectedEventDate = "2028-12-14";
+//		// Create Response object
+//		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		// set mock expectations for venue web service
+//		try {
+//			mockRestServer.expect(ExpectedCount.once(),
+//				requestTo(venueReservationUrl))
+//				.andExpect(method(HttpMethod.POST))
+//				.andRespond(withStatus(HttpStatus.OK)
+//				.contentType(MediaType.APPLICATION_JSON)
+//				.body(mapper.writeValueAsString(venueReservationResponse)));
+//		} catch(Exception ex) {
+//			ex.printStackTrace();
+//		}
+//		
+//		//setup mock repository expectation since we pass the date check
+//		EventDetail returnEventDetail = populateReturnEventDetail();
+//		when(eventRepository.save(Mockito.any(EventDetail.class))) 
+//			.thenReturn(returnEventDetail);
+//
+//		String emailResult=AppConstants.SUCCESS;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.SUCCESS);
+//
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeSendEmailInvalidEmailDistributionList() {
+//		//arrange 
+//		arrangeBaseline();
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		
+//		String emailResult=AppConstants.EMAIL_INVALID_DISTRIBUTION_LIST;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_INVALID_DISTRIBUTION_LIST);
+//
+//		mockWebServiceServer.verify();
+//	}
+//	
+//	@Test
+//	void negativeSendEmailInvalidEmailSenderAddress() {
+//		//arrange 
+//		arrangeBaseline();
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		String emailResult=AppConstants.EMAIL_INVALID_SENDER_ADDRESS;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_INVALID_SENDER_ADDRESS);
+//		
+//		mockWebServiceServer.verify();
+//	}
+//
+//	@Test
+//	void negativeSendEmailInvalidEmailNoBody() {
+//		//arrange 
+//		arrangeBaseline();
+//		
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		String emailResult=AppConstants.EMAIL_NO_BODY;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_NO_BODY);
+//		
+//		mockWebServiceServer.verify();
+//	}
+//	
+//	@Test
+//	void negativeSendEmailInvalidEmailNoSubject() {
+//		//arrange 
+//		arrangeBaseline();
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		String emailResult=AppConstants.EMAIL_NO_SUBJECT;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//		
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_NO_SUBJECT);
+//		
+//		mockWebServiceServer.verify();
+//	}
 
-	@Test
-	void negativeVenueRequirementsCheckerCapacity() {
-		//arrange 
-
-		populateEventInformation(10);
-		XMLUnit.setIgnoreComments(true);
-		XMLUnit.setIgnoreWhitespace(true);
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerCapacityRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerCapacityResponseString());
-		eventInformation.setExpectedNumberAttendees(1000);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer
-			.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_REQ_CAPACITY_INSUFFICIENT,eventConfirmation.getConfirmationStatus()); 
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeVenueRequirementsBigScreen() {
-		//arrange 
-		
-		populateEventInformation(10);
-		XMLUnit.setIgnoreComments(true);
-		XMLUnit.setIgnoreWhitespace(true);
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerBigScreenRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerBigScreenResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(true);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_REQ_NO_BIG_SCREEN,eventConfirmation.getConfirmationStatus()); 
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeVenueRequirementsException() {
-		//arrange 
-		
-		populateEventInformation(10);
-		XMLUnit.setIgnoreComments(true);
-		XMLUnit.setIgnoreWhitespace(true);
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerExceptionPayloadString());
-		eventInformation.setExpectedNumberAttendees(101);
-		eventInformation.setLargeScreenNeeded(false);
-		RuntimeException runtimeException = new RuntimeException("An exception occured.");
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withException(runtimeException));
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_REQ_EXCEPTION_OCCURED,eventConfirmation.getConfirmationStatus()); 
-		mockWebServiceServer.verify();
-	}
-
-	private String buildVenueRequirementsCheckerExceptionPayloadString() {
-		String requestCapacityTooGreat = 
-				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
-					"<venueRequirements>"+
-						"<nameOfVenue>Junit test hall</nameOfVenue>"+
-						"<expectedNumberAttendees>101</expectedNumberAttendees>"+
-						"<largeScreenNeeded>false</largeScreenNeeded>"+
-					"</venueRequirements>"+
-				"</checkVenueMeetsRequirments>";
-		return requestCapacityTooGreat;
-	}
 	
-	private String buildVenueRequirementsCheckerCapacityRequestString() {
-		String requestCapacityTooGreat = 
-				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
-					"<venueRequirements>"+
-						"<nameOfVenue>Junit test hall</nameOfVenue>"+
-						"<expectedNumberAttendees>1000</expectedNumberAttendees>"+
-						"<largeScreenNeeded>false</largeScreenNeeded>"+
-					"</venueRequirements>"+
-				"</checkVenueMeetsRequirments>";
-		return requestCapacityTooGreat;
-	}
 	
-	private String buildVenueRequirementsCheckerCapacityResponseString() {
-		String responseCapacityTooGreat = 
-				"<checkVenueMeetsRequirmentsResponse xmlns=\"http://soapy1\">"+
-					"<checkVenueMeetsRequirmentsReturn>"+
-						"<responseCode>"+AppConstants.VENUE_REQ_CAPACITY_INSUFFICIENT+"</responseCode> " +
-						"<responseCodeExplanation>Because it is too small for the crowd</responseCodeExplanation>"+
-					"</checkVenueMeetsRequirmentsReturn>"+
-				"</checkVenueMeetsRequirmentsResponse>" ;
-		return responseCapacityTooGreat;
-	}
-	
-	private String buildVenueRequirementsCheckerBigScreenRequestString() {
-		String requestCapacityTooGreat = 
-				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
-					"<venueRequirements>"+
-						"<nameOfVenue>Junit test hall</nameOfVenue>"+
-						"<expectedNumberAttendees>100</expectedNumberAttendees>"+
-						"<largeScreenNeeded>true</largeScreenNeeded>"+
-					"</venueRequirements>"+
-				"</checkVenueMeetsRequirments>";
-		return requestCapacityTooGreat;
-	}
-	
-	private String buildVenueRequirementsCheckerBigScreenResponseString() {
-		String responseCapacityTooGreat = 
-				"<checkVenueMeetsRequirmentsResponse xmlns=\"http://soapy1\">"+
-					"<checkVenueMeetsRequirmentsReturn>"+
-						"<responseCode>"+AppConstants.VENUE_REQ_NO_BIG_SCREEN+"</responseCode> " +
-						"<responseCodeExplanation>No big screen on stage.</responseCodeExplanation>"+
-					"</checkVenueMeetsRequirmentsReturn>"+
-				"</checkVenueMeetsRequirmentsResponse>" ;
-		return responseCapacityTooGreat;
-	}
-	
-	private String buildVenueRequirementsCheckerSuccessfulRequestString() {
-		String requestCapacityTooGreat = 
-				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
-					"<venueRequirements>"+
-						"<nameOfVenue>"+eventInformation.getEventVenue()+"</nameOfVenue>"+
-						"<expectedNumberAttendees>100</expectedNumberAttendees>"+
-						"<largeScreenNeeded>false</largeScreenNeeded>"+
-					"</venueRequirements>"+
-				"</checkVenueMeetsRequirments>";
-		return requestCapacityTooGreat;
-	}
-	
-	private String buildVenueRequirementsCheckerSuccessfulResponseString() {
-		String responseCapacityTooGreat = 
-				"<checkVenueMeetsRequirmentsResponse xmlns=\"http://soapy1\">"+
-					"<checkVenueMeetsRequirmentsReturn>"+
-						"<responseCode>"+AppConstants.SUCCESS+"</responseCode> " +
-						"<responseCodeExplanation>Because it is too small for the crowd</responseCodeExplanation>"+
-					"</checkVenueMeetsRequirmentsReturn>"+
-				"</checkVenueMeetsRequirmentsResponse>" ;
-		return responseCapacityTooGreat;
-	}
-	
-	@Test
-	void negativeDateInputLowerBound() {
-		//arrange 
-		populateEventInformation(0);
+//	@Test
+//	void negativeSendEmailInvalidEmailSubjectTooLong() {
+//		//arrange 
+//		arrangeBaseline();
+//
+//		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
+//		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
+//		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
+//		eventInformation.setExpectedNumberAttendees(100);
+//		eventInformation.setLargeScreenNeeded(false);
+//
+//		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
+//			.andRespond(ResponseCreators.withPayload(responsePayload));
+//		
+//		String emailResult=AppConstants.EMAIL_SUBJECT_TOO_LONG;
+//		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
+//			.thenReturn(emailResult);
+//
+//		//Act
+//		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
+//
+//		//Assert
+//		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_SUBJECT_TOO_LONG);
+//		
+//		mockWebServiceServer.verify();
+//	}
 
+	@Test
+	void negativeTweetSchemaInvalid() {
+		//arrange 
+		arrangeBaseline();
 		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
 		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
 		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
@@ -294,511 +1036,32 @@ public class EventSchedulerTests {
 		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
 			.andRespond(ResponseCreators.withPayload(responsePayload));
 		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertTrue(eventConfirmation.getConfirmationStatus().contains("InputError") 
-				&& eventConfirmation.getConfirmationStatusExplanation().contains("must be greater than zero and less than"));
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeDateInputUpperBound() {
-		//arrange 
-		populateEventInformation(31);
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertTrue(eventConfirmation.getConfirmationStatus().contains("InputError") 
-				&& eventConfirmation.getConfirmationStatusExplanation().contains("must be greater than zero and less than"));
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	public void positiveDatePlus3() {
-		//arrange 
-		populateEventInformation(3);
-		expectedEventDate = "2028-11-03";
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		mockRestServer.verify();
-
-		//Assert
-		assertEquals(expectedEventDate,eventConfirmation.getEventDate()); 
-		
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void positiveDatePlus10() {
-		//arrange 
-		populateEventInformation(10);
-		expectedEventDate = "2028-11-14";
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(expectedEventDate,eventConfirmation.getEventDate()); 
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void positiveDatePlus30() {
-		//arrange 
-		populateEventInformation(30);
-		expectedEventDate = "2028-12-14";
-
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(expectedEventDate,eventConfirmation.getEventDate()); 
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeReserveVenueConnectNotSuccessful() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformationDuplicate(10); 
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.REQUEST_TIMEOUT)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.VENUE_CONNECT_FAILED);
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeReserveVenueDateBookedAlready() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformationDuplicate(10); 
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseDup();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_ALREADY_BOOKED_FOR_DATE, eventConfirmation.getVenueReservationStatus());
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeReserveVenueInvalidCreditCard() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformation(10); 
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseInvalidPaymentCard();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_PAYMENT_CARD_INVALID, eventConfirmation.getVenueReservationStatus());
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeReserveVenueInvalidCreditCardCvc() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformation(10); 
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseInvalidPaymentCardCvc();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_PAYMENT_CARD_CVC_INVALID, eventConfirmation.getVenueReservationStatus());
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeReserveVenuePaymentCardExpired() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformation(10); 
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponsePaymentCardExpired();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_PAYMENT_CARD_EXPIRED, eventConfirmation.getVenueReservationStatus());
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeReserveVenueDepositAmtExceedsAvailableCredit() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformation(10); 
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponseVenueDepositAmtExceedsAvailableCredit();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(AppConstants.VENUE_DEPOSIT_AMT_EXCEEDS_AVAILABLE_CREDIT, eventConfirmation.getVenueReservationStatus());
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void positiveReserveVenue() {
-		//arrange 
-
-		// create request entity
-		expectedEventDate = "2028-11-14";
-		populateEventInformationDuplicate(10); 
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
 		String emailResult=AppConstants.SUCCESS;
 		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
 			.thenReturn(emailResult);
-
 		
+		String tweetMsg = "Please join us from 9 AM to 5 PM on "
+				+ expectedEventDate	+ ". " + eventInformation.getEventDescription()
+				+ "Click the Zoom link to join:" + eventInformation.getZoomMeeting();
+		
+	    SpecificRecord tweetDto = (SpecificRecord) new TweetDto(eventInformation.getTwitterAccount(),eventInformation.getTwitterHashTags(),tweetMsg);
+	    String producerKey = "CID-321";    
+	    ProducerRecord<String, SpecificRecord> producerRecord = new ProducerRecord<String, SpecificRecord>(
+	    		kafkaTopicTweet, producerKey, (SpecificRecord)tweetDto);
+	    Future<RecordMetadata> record = myMockProducer.send(producerRecord);
+	    SerializationException serializationException = new SerializationException("producer failed to serialize avro object, perhaps schema or topic out of synch"); 
+	    myMockProducer.errorNext(serializationException);
 		//Act
 		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
 		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.SUCCESS);
-
+		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.TWEET_FAILED);
 		mockWebServiceServer.verify();
 	}
 
 	@Test
-	void negativeSaveEventRepository() {
+	void positiveTweet() {
 		//arrange 
-		// Create Response object
-		populateEventInformation(30);
-		expectedEventDate = "2028-12-14";
+		arrangeBaseline();
 
 		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
 		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
@@ -809,219 +1072,26 @@ public class EventSchedulerTests {
 		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
 			.andRespond(ResponseCreators.withPayload(responsePayload));
 		
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		// setup repository expectations
-		when(eventRepository.save(any(EventDetail.class))) 
-				.thenThrow(IllegalArgumentException.class);
-		
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertTrue(eventConfirmation.getConfirmationStatus().contains(AppConstants.SAVE_ERROR) 
-				&& eventConfirmation.getConfirmationStatusExplanation().contains("IllegalArgumentException"));
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void positiveSaveEventRepository() {
-		//arrange 
-
-		populateEventInformation(30);
-		expectedEventDate = "2028-12-14";
-		// Create Response object
-		VenueReservationResponse venueReservationResponse = populateVenueReservationResponse();
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		// set mock expectations for venue web service
-		try {
-			mockRestServer.expect(ExpectedCount.once(),
-				requestTo(venueReservationUrl))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withStatus(HttpStatus.OK)
-				.contentType(MediaType.APPLICATION_JSON)
-				.body(mapper.writeValueAsString(venueReservationResponse)));
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-		
-		//setup mock repository expectation since we pass the date check
-		EventDetail returnEventDetail = populateReturnEventDetail();
-		when(eventRepository.save(Mockito.any(EventDetail.class))) 
-			.thenReturn(returnEventDetail);
-
 		String emailResult=AppConstants.SUCCESS;
 		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
 			.thenReturn(emailResult);
-
+		
+		String tweetMsg = "Please join us from 9 AM to 5 PM on "
+				+ expectedEventDate	+ ". " + eventInformation.getEventDescription()
+				+ "Click the Zoom link to join:" + eventInformation.getZoomMeeting();
+		
+	    SpecificRecord tweetDto = (SpecificRecord) new TweetDto(eventInformation.getTwitterAccount(),eventInformation.getTwitterHashTags(),tweetMsg);
+	    String producerKey = "CID-321";    
+	    ProducerRecord<String, SpecificRecord> producerRecord = new ProducerRecord<String, SpecificRecord>(
+	    		kafkaTopicTweet, producerKey, (SpecificRecord)tweetDto);
+	    Future<RecordMetadata> record = myMockProducer.send(producerRecord);
 		//Act
 		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
 		//Assert
 		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.SUCCESS);
-
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeSendEmailInvalidEmailDistributionList() {
-		//arrange 
-		arrangeBaseline();
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		
-		String emailResult=AppConstants.EMAIL_INVALID_DISTRIBUTION_LIST;
-		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
-			.thenReturn(emailResult);
-
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_INVALID_DISTRIBUTION_LIST);
-
 		mockWebServiceServer.verify();
 	}
 	
-	@Test
-	void negativeSendEmailInvalidEmailSenderAddress() {
-		//arrange 
-		arrangeBaseline();
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		String emailResult=AppConstants.EMAIL_INVALID_SENDER_ADDRESS;
-		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
-			.thenReturn(emailResult);
-
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_INVALID_SENDER_ADDRESS);
-		
-		mockWebServiceServer.verify();
-	}
-
-	@Test
-	void negativeSendEmailInvalidEmailNoBody() {
-		//arrange 
-		arrangeBaseline();
-		
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		String emailResult=AppConstants.EMAIL_NO_BODY;
-		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
-			.thenReturn(emailResult);
-
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_NO_BODY);
-		
-		mockWebServiceServer.verify();
-	}
-	
-	@Test
-	void negativeSendEmailInvalidEmailNoSubject() {
-		//arrange 
-		arrangeBaseline();
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		String emailResult=AppConstants.EMAIL_NO_SUBJECT;
-		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
-			.thenReturn(emailResult);
-
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-		
-		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_NO_SUBJECT);
-		
-		mockWebServiceServer.verify();
-	}
-	
-	@Test
-	void negativeSendEmailInvalidEmailSubjectTooLong() {
-		//arrange 
-		arrangeBaseline();
-
-		MockWebServiceServer mockWebServiceServer = MockWebServiceServer.createServer(venueRequirementsCheckerClient);
-		Source requestPayload = new StringSource(buildVenueRequirementsCheckerSuccessfulRequestString());
-		Source responsePayload = new StringSource(buildVenueRequirementsCheckerSuccessfulResponseString());
-		eventInformation.setExpectedNumberAttendees(100);
-		eventInformation.setLargeScreenNeeded(false);
-
-		mockWebServiceServer.expect(RequestMatchers.payload(requestPayload))
-			.andRespond(ResponseCreators.withPayload(responsePayload));
-		
-		String emailResult=AppConstants.EMAIL_SUBJECT_TOO_LONG;
-		when(emailGateway.sendEmailToDistributionList(Mockito.any(EmailPackage.class)))
-			.thenReturn(emailResult);
-
-		//Act
-		EventConfirmation eventConfirmation = myEventScheduler.scheduleMyEvent(eventInformation);
-
-		//Assert
-		assertEquals(eventConfirmation.getConfirmationStatus(),AppConstants.EMAIL_SUBJECT_TOO_LONG);
-		
-		mockWebServiceServer.verify();
-	}
-	
-
 	private void arrangeBaseline() {
 		populateEventInformation(30);
 		expectedEventDate = "2028-12-14";
@@ -1052,7 +1122,7 @@ public class EventSchedulerTests {
 		eventInformation.setEventVenue("Junit test hall");
 		eventInformation.setDepositAmount(new BigDecimal("100.00"));
 		eventInformation.setEventBusinessDaysInFuture(eventBusinessDaysInFuture);
-		eventInformation.setEventCoordinatorEmail("jtester@junitevents.com");
+		eventInformation.setEventCoordinatorEmail(AppConstants.TWEET_ACCOUNT);
 		eventInformation.setEventCoordinatorName("Q Tester");
 		eventInformation.setInvitationDistributionListEmail("rrtesters@acme-testing.com");
 		eventInformation.setPaymentCardForDeposit("1234123412341234");
@@ -1060,6 +1130,9 @@ public class EventSchedulerTests {
 		eventInformation.setPaymentCardCVCCode("123");
 		eventInformation.setExpectedNumberAttendees(100);
 		eventInformation.setLargeScreenNeeded(false);
+		eventInformation.setTwitterAccount(AppConstants.TWEET_ACCOUNT);
+		eventInformation.setTwitterHashTags(AppConstants.TWEET_HASHTAG);
+		eventInformation.setZoomMeeting("https://us02web.zoom.us/j/123?pwd=SmokeAndMirrors");
 	}
 
 	private void populateEventInformationDuplicate(long eventBusinessDaysInFuture) {
@@ -1114,8 +1187,30 @@ public class EventSchedulerTests {
 		venueReservationResponse.setVenueReservationStatusExplanation("The charge amount exceeds available credit." );
 		return venueReservationResponse;
 	}
-
 	
+	private String buildVenueRequirementsCheckerSuccessfulRequestString() {
+		String requestCapacityTooGreat = 
+				"<checkVenueMeetsRequirments xmlns=\"http://soapy1\">"+
+					"<venueRequirements>"+
+						"<nameOfVenue>"+eventInformation.getEventVenue()+"</nameOfVenue>"+
+						"<expectedNumberAttendees>100</expectedNumberAttendees>"+
+						"<largeScreenNeeded>false</largeScreenNeeded>"+
+					"</venueRequirements>"+
+				"</checkVenueMeetsRequirments>";
+		return requestCapacityTooGreat;
+	}
+
+	private String buildVenueRequirementsCheckerSuccessfulResponseString() {
+		String responseCapacityTooGreat = 
+				"<checkVenueMeetsRequirmentsResponse xmlns=\"http://soapy1\">"+
+					"<checkVenueMeetsRequirmentsReturn>"+
+						"<responseCode>"+AppConstants.SUCCESS+"</responseCode> " +
+						"<responseCodeExplanation>Because it is too small for the crowd</responseCodeExplanation>"+
+					"</checkVenueMeetsRequirmentsReturn>"+
+				"</checkVenueMeetsRequirmentsResponse>" ;
+		return responseCapacityTooGreat;
+	}
+		
 	private EventDetail populateReturnEventDetail() {
 			EventDetail edt = new EventDetail();
 			edt.setEventCoordinatorEmail(eventInformation.getEventCoordinatorEmail());

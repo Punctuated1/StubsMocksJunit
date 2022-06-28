@@ -17,7 +17,9 @@ public class EventInformation {
 	private long eventBusinessDaysInFuture;
 	private int expectedNumberAttendees;
 	private boolean largeScreenNeeded;
-	
+	private String zoomMeeting;
+	private String twitterHashTags;
+	private String twitterAccount;
 	
 	public EventInformation() {
 	}
@@ -132,6 +134,30 @@ public class EventInformation {
 
 	public void setLargeScreenNeeded(boolean largeScreenNeeded) {
 		this.largeScreenNeeded = largeScreenNeeded;
+	}
+
+	public String getZoomMeeting() {
+		return zoomMeeting;
+	}
+
+	public void setZoomMeeting(String zoomMeeting) {
+		this.zoomMeeting = zoomMeeting;
+	}
+
+	public String getTwitterHashTags() {
+		return twitterHashTags;
+	}
+
+	public void setTwitterHashTags(String twitterHashTags) {
+		this.twitterHashTags = twitterHashTags;
+	}
+
+	public String getTwitterAccount() {
+		return twitterAccount;
+	}
+
+	public void setTwitterAccount(String twitterAccount) {
+		this.twitterAccount = twitterAccount;
 	}
 
 }

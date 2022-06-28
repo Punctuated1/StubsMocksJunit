@@ -5,7 +5,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 
+import org.apache.avro.specific.SpecificRecord;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,11 +28,22 @@ import com.example.consumingwebservice.wsdl.CheckVenueMeetsRequirmentsResponse;
 import com.example.consumingwebservice.wsdl.VenueRequirements;
 import com.example.consumingwebservice.wsdl.VenueRequirementsResponse;
 
+import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
+import myapp.generated.avro.TweetDto;
+
+
 @Service
 public class MyEventScheduler {
 	@Autowired
 	@Qualifier("corporateCalendar")
 	private CorporateCalendarInterface corporateCalendar;
+
+	@Autowired
+	@Qualifier("idManager")
+	private IdManagerInterface idManager;
+	
+	@Autowired
+	private KafkaProducerConfigHelper kafkaProducerConfigHelper;
 	
 	@Autowired
 	private EmailGatewayInterface emailGateway;
@@ -44,14 +60,16 @@ public class MyEventScheduler {
     private boolean errorOccurred = false;
     
     private EventConfirmation eventConfirmation;
-    
+
 	@Value("${venue.reservation.url}")
 	private String venueReservationUrlString;
 	
 	@Value("${venue.checker.port}")
 	private int venueCheckerPort;
-	
-	
+ 
+    @Value("${kafka.topic.tweet}")
+    private String kafkaTopicTweet;
+     
 	private Map<String, String> emailResponseMap = new HashMap<String, String>();
     
 	public MyEventScheduler() {
@@ -75,6 +93,7 @@ public class MyEventScheduler {
 		reserveVenue(eventInformation);
 		persistEvent(eventInformation);
 		sendEmail(eventInformation);
+		tweetIt(eventInformation);
 
 		return eventConfirmation;
 	}
@@ -95,8 +114,8 @@ public class MyEventScheduler {
 	private EventConfirmation populateBasicConfirmation(EventInformation eventInformation) {
 		EventConfirmation eventConfirmation = new EventConfirmation();
 		eventConfirmation.setEventDescription(eventInformation.getEventDescription());
-		eventConfirmation.setEventId("EID-"+LocalDateTime.now().toString());
-		eventConfirmation.setConfirmationId("CID-"+LocalDateTime.now().toString());
+		eventConfirmation.setEventId(idManager.getUniqueEventId());
+		eventConfirmation.setConfirmationId(idManager.getUniqueConfirmationId());
 		return eventConfirmation;
 	}
 	
@@ -248,4 +267,43 @@ public class MyEventScheduler {
 		emailPackage.setEmailSubject(eventInformation.getEmailSubject());
 		return emailPackage;		
 	}
+
+	public void tweetIt(EventInformation eventInformation) {
+		
+		if(!errorOccurred) {
+			try {
+				Producer<String, SpecificRecord>  myProducer = kafkaProducerConfigHelper.getMyKafkaProducer();
+				
+				String tweetMsg = "Please join us from 9 AM to 5 PM on "
+						+ eventConfirmation.getEventDate()
+						+ ". "
+						+ eventInformation.getEventDescription()
+						+ "Click the Zoom link to join:"
+						+ eventInformation.getZoomMeeting();
+				
+			    SpecificRecord tweetDto = (SpecificRecord) new TweetDto(eventInformation.getTwitterAccount(),eventInformation.getTwitterHashTags(),tweetMsg);
+
+			    String producerKey = eventConfirmation.getConfirmationId();    
+			    ProducerRecord<String, SpecificRecord> producerRecord = new ProducerRecord<String, SpecificRecord>(
+			    		kafkaTopicTweet, producerKey, (SpecificRecord)tweetDto);
+
+					 
+			     myProducer.send(producerRecord);
+			     
+			     eventConfirmation.setConfirmationStatus(AppConstants.SUCCESS);
+			     eventConfirmation.setConfirmationId(idManager.getUniqueConfirmationId());
+			     eventConfirmation.setConfirmationStatusExplanation("Tweet completed");
+			     eventConfirmation.setEventId(idManager.getUniqueEventId());
+				
+			} catch(Exception ex) {
+				ex.printStackTrace();
+				errorOccurred = true;
+				eventConfirmation.setConfirmationStatus(AppConstants.TWEET_FAILED);
+				eventConfirmation.setConfirmationStatusExplanation(ex.getMessage());
+			}
+			
+		}
+	}
+	
+
 }

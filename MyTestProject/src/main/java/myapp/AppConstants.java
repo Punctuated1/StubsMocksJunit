@@ -16,6 +16,12 @@ public final class AppConstants {
 	public final static String VENUE_REQ_CAPACITY_INSUFFICIENT = "errorVenueCapacityInsufficient";
 	public final static String VENUE_REQ_NO_BIG_SCREEN = "errorVenueNoBigScreen";
 	public final static String VENUE_REQ_EXCEPTION_OCCURED = "venueReqExceptionOccurred";
+	public final static String TWEET_FAILED = "tweetFailed";
+	public final static String TWEET_ACCOUNT = "jtester@junitevents.com";
+	public final static String TWEET_HASHTAG = "#junitevent";
+	
+	
+	
 
 	public final static String SAVE_ERROR = "SaveError";
 
