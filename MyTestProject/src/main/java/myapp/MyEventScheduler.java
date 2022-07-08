@@ -6,11 +6,14 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.avro.specific.SpecificRecord;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -254,6 +257,9 @@ public class MyEventScheduler {
 		if(!errorOccurred) {
 			EmailPackage emailPackage = populateEmailPackage(eventInformation);
 			String emailResult = emailGateway.sendEmailToDistributionList(emailPackage);
+			if(!emailResult.equalsIgnoreCase(AppConstants.SUCCESS)) {
+				errorOccurred=true;
+			}
 			eventConfirmation.setConfirmationStatus(emailResult);
 			eventConfirmation.setConfirmationStatusExplanation(emailResponseMap.get(emailResult));
 		}
@@ -285,18 +291,19 @@ public class MyEventScheduler {
 
 			    String producerKey = eventConfirmation.getConfirmationId();    
 			    ProducerRecord<String, SpecificRecord> producerRecord = new ProducerRecord<String, SpecificRecord>(
-			    		kafkaTopicTweet, producerKey, (SpecificRecord)tweetDto);
+			    		kafkaTopicTweet, producerKey, tweetDto);
 
 					 
-			     myProducer.send(producerRecord);
+			    Future<RecordMetadata> myRecord = myProducer.send(producerRecord);
 			     
+//			    myRecord.get(10,TimeUnit.MILLISECONDS);
 			     eventConfirmation.setConfirmationStatus(AppConstants.SUCCESS);
 			     eventConfirmation.setConfirmationId(idManager.getUniqueConfirmationId());
 			     eventConfirmation.setConfirmationStatusExplanation("Tweet completed");
 			     eventConfirmation.setEventId(idManager.getUniqueEventId());
 				
 			} catch(Exception ex) {
-				ex.printStackTrace();
+				//ex.printStackTrace();
 				errorOccurred = true;
 				eventConfirmation.setConfirmationStatus(AppConstants.TWEET_FAILED);
 				eventConfirmation.setConfirmationStatusExplanation(ex.getMessage());

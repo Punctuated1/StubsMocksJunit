@@ -82,8 +82,13 @@ dependencies {
 	implementation 'org.apache.kafka:kafka_2.10:0.10.2.2'
 	implementation 'org.apache.avro:avro:1.11.0'
 	implementation 'io.confluent:kafka-streams-avro-serde:7.1.0'
+
+	implementation 'org.springframework.boot:spring-boot-starter-amqp'
+//	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.amqp:spring-rabbit-test'
 	
-	testImplementation('org.springframework.boot:spring-boot-starter-test')
+	
 	testImplementation 'org.mockito:mockito-core:3.+'
 //	testImplementation 'org.mock-server:mockserver-netty:5.13.2'
 //	testImplementation 'org.mock-server:mockserver-spring-test-listener:5.13.2'
